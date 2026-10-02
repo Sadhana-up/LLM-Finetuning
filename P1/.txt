@@ -1,0 +1,69 @@
+================================================================================
+QUANTIZATION — Cheat Sheet
+================================================================================
+
+BIGGER MODEL -> SMALLER MODEL. Lossy compression of weights/params.
+  FP32 = 4 bytes | FP16/BF16 = 2 bytes | INT8 = 1 byte | INT4 = 0.5 byte
+
+WHY? LLM weights cluster near 0. Floats waste bits on exponent range that is
+never used. Integers spend every bit on precision in range. Int math is faster.
+FP16 is only 2x; INT8 is 4x; INT4 is 8x.
+
+2 THINGS EVERY SCHEME NEEDS:
+  scale (s)  = size of one integer step
+  zero point (z) = which integer means real 0.0
+
+  quantize  :  q = clamp( round(x / s) + z , qmin, qmax )
+  dequantize:  x_hat = ( q - z ) * s
+
+--------------------------------------------------------------------------------
+SYMMETRIC  (grid -128..127)                     -> 1 number stored (just scale)
+--------------------------------------------------------------------------------
+  scale = (max - min) / (qmax - qmin)
+  zero point = 0   (forced)
+  q = clamp( round(x/scale), -128, 127 )
+
+  Example [-0.1, 0.1]:  scale = 0.2/255 = 0.000784
+                       0.05 -> 64 -> 0.0502          (tiny error)
+                       0.0  -> 0  -> exact
+
+  + cheap, real 0 is exactly representable
+  - wastes one side of the grid if data is skewed
+  - one outlier ruins everything (scale becomes huge)
+
+--------------------------------------------------------------------------------
+ASYMMETRIC (grid 0..255)              -> 2 numbers stored (scale + zero point)
+--------------------------------------------------------------------------------
+  scale      = (max - min) / (qmax - qmin)
+  zero point = qmin - round( min / scale )
+  q = clamp( round(x/scale) + zero point , 0, 255 )
+
+  Example, original data (-5 to 1000):            <-- YOUR NOTE, WORKED OUT
+      scale = 1005 / 255 = 3.941176
+      zero point = 0 - round( -5 / 3.941176 ) = 0 - round(-1.268) = 0 - (-1) = 1
+      sanity check: min value -5 -> -1.27 -> -1, then -1 + 1 = 0 = qmin  OK
+      so integer 1 is the ZERO POINT (represents real 0.0)
+      1000 -> round(253.7)+1 = 255   -> 255-1 = 254 x 3.941176 = 1000.8  OK
+
+  + uses EVERY integer level, better for skewed data
+  + hits min and max exactly
+  - must store zero point too
+  - still dies on extreme outliers (3.94 is just too big a step)
+
+--------------------------------------------------------------------------------
+CHOOSE
+--------------------------------------------------------------------------------
+  SYMMETRIC  : weights (roughly centred on 0), cheapest, real 0 exact
+  ASYMMETRIC : activations (skewed, post-ReLU min=0), uses full grid
+
+  Caveat: range [-5,1000] gives scale 3.94 BOTH ways. Asymmetric helps moderate
+  skew, not 200:1 skew. Real fix = quantize FINER + CLIP THE OUTLIERS:
+
+  PER-TENSOR : 1 scale per tensor                simplest, worst
+  PER-CHANNEL: 1 scale per output channel (W)    standard for weights, ~free
+  PER-GROUP   : 1 scale per 32/64/128 values      GPTQ, AWQ, GGUF
+  PER-TOKEN   : 1 scale per token row (X)        LLM.int8(), SmoothQuant
+
+
+
+
