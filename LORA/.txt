@@ -1,0 +1,11 @@
+Low rank adaptation :
+We use rank 
+Rank ( num of linearly independent cols ) * linear combination of all cols
+by this the number of weight is automatically less than the actual 
+FORMULA : 
+W(d*k) = A (d*r) ** B (r*k)
+A = rank matrix 
+B = linearly independent
+
+PHASE TWO : 
+ADAPTERS 
